@@ -98,7 +98,7 @@ st.title("🚀 Công Cụ Phân Tích Sản Phẩm")
 st.info("Upload file CSV sản phẩm, chỉnh sửa prompt nếu cần, sau đó nhấn 'Bắt đầu Phân tích'.")
 
 # <<< MỤC MỚI 1: HƯỚNG DẪN SỬ DỤNG >>>
-with st.expander("📖 Xem hướng dẫn sử dụng (Workflow)", expanded=True):
+with st.expander("📖 Xem hướng dẫn sử dụng (Workflow)", expanded=False):
     st.markdown("""
     **Công cụ này được thiết kế để làm việc với file CSV được xuất ra từ tool Black Box của Helium 10.**
 
