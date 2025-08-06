@@ -10,6 +10,8 @@ import os
 from datetime import datetime
 import io
 import pandas as pd
+from streamlit_autorefresh import st_autorefresh
+
 
 # Tạo một "nhịp tim" để giữ kết nối sống, chạy 2 phút một lần (120 giây)
 # Tín hiệu này đủ để báo cho các tầng mạng biết session vẫn hoạt động.
