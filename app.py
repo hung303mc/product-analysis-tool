@@ -133,8 +133,9 @@ def main():
     # <<< THÊM LỰA CHỌN OUTPUT MỚI >>>
     st.sidebar.header("Cài đặt Output")
     output_option = st.sidebar.radio("Chọn định dạng output:",
-                                     ('Tải File CSV', 'Ghi vào Google Sheet'))
-
+                                     ('Tải File CSV', 'Ghi vào Google Sheet'),
+                                     index=1)
+                                     
     # Các trường nhập liệu cho Google Sheet chỉ hiện ra khi cần
     gsheet_id = ""
     if output_option == 'Ghi vào Google Sheet':
