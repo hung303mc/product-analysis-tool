@@ -10,12 +10,6 @@ import os
 from datetime import datetime
 import io
 import pandas as pd
-from streamlit_autorefresh import st_autorefresh
-
-
-# Tạo một "nhịp tim" để giữ kết nối sống, chạy 2 phút một lần (120 giây)
-# Tín hiệu này đủ để báo cho các tầng mạng biết session vẫn hoạt động.
-st_autorefresh(interval=2 * 60 * 1000, key="heartbeat_refresher")
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Product Analysis Tool", page_icon="🚀", layout="wide")
