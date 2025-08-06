@@ -1,0 +1,11 @@
+name: product_analysis_env
+channels:
+  - https://repo.anaconda.com/pkgs/snowflake
+dependencies:
+  - python=3.9
+  - streamlit
+  - pandas
+  - google-generativeai
+  - gspread
+  - gspread-dataframe
+  - requests
