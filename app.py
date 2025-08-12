@@ -12,12 +12,24 @@ import io
 import pandas as pd
 import numpy as np
 import logging # <<< DEBUG LOG >>> Thêm thư viện logging
+from google.api_core import exceptions as google_exceptions
 
 # <<< DEBUG LOG >>> Cấu hình logging để in ra console
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    encoding='utf-8',
+    handlers=[
+        # Handler này để ghi log vào file.
+        # mode='w' nghĩa là ghi đè file mỗi lần chạy. Đổi thành 'a' nếu muốn ghi nối tiếp.
+        logging.FileHandler("debug_log.txt", mode='a'),
+        
+        # Handler này để giữ lại việc in log ra console (terminal) như cũ.
+        logging.StreamHandler()
+    ]
 )
+
+logging.info("Logging đã được cấu hình để ghi vào file debug_log.txt và console.")
 
 
 # --- PAGE CONFIG ---
@@ -47,7 +59,7 @@ BỐI CẢNH & QUY TẮC KINH DOANH:
 1.  **Mô hình Logistics:** - Giai đoạn 1 (Test): Bán hàng theo hình thức Dropshipping. Sản phẩm được ship lẻ trực tiếp từ nhà cung cấp (cụ thể là từ Trung Quốc) đến khách hàng ở Mỹ để kiểm chứng nhu cầu thị trường mà không cần vốn nhập hàng.
 - Giai đoạn 2 (Scale): Khi một sản phẩm cho thấy tín hiệu tốt (doanh số, phản hồi tích cực), sẽ tiến hành nhập một lô hàng nhỏ (100-500 sản phẩm) về kho tại Mỹ để tối ưu tốc độ giao hàng (FBM hoặc FBA) và tăng biên lợi nhuận.
 2.  **GIỚI HẠN CÂN NẶNG NGHIÊM NGẶT:** Sản phẩm > 4 lbs (~1.8 kg) sẽ tự động bị 'Bỏ qua' (Skip). Lý tưởng là dưới 3 lbs (~1.4 kg).
-3.  **Lợi nhuận là trên hết:** Sử dụng chi phí vận chuyển tham khảo (~$15 cho 1lb, ~$25 cho 2lbs, v.v.) để ước tính lợi nhuận ròng tiềm năng.
+3.  **Lợi nhuận là trên hết:** Sử dụng chi phí vận chuyển tham khảo ví dụ: (~$8.5 cho ~0.5lb, ~$15 cho ~1lb, ~$19.5 cho ~1.5lb, ~$25 cho ~2lb, v.v.) để ước tính lợi nhuận ròng tiềm năng.
 4.  **THÀNH CÔNG BAN ĐẦU (để tham khảo, không phải giới hạn):** Doanh nghiệp đã có thành công bước đầu với ngách "Các thiết bị cho thời tiết nóng" và "Phụ kiện thời trang mùa hè". Hãy dùng thông tin này làm ngữ cảnh để nhận diện các mô thức thành công (ví dụ: sản phẩm độc đáo giải quyết vấn đề), nhưng TUYỆT ĐỐI KHÔNG chấm điểm thấp cho các sản phẩm thuộc ngành hàng mới. Mục tiêu chính là tìm ra NGÁCH THÀNH CÔNG TIẾP THEO.
 5.  **Mục tiêu cốt lõi:** Tìm kiếm các sản phẩm độc đáo, có tiềm năng viral, có thể tìm nguồn từ 1688 trung quốc, Vietnam, ok cho sản phẩm cá nhân hóa
 6.  **Tư duy về Review Thấp: Cơ hội trong Rủi ro.** không tự động 'Bỏ qua' một sản phẩm chỉ vì nó có review thấp. Thay vào đó, hãy xem đây là một **CƠ HỘI LỚN**. Review thấp nhưng doanh số vẫn cao cho thấy nhu cầu thị trường rất mạnh và các đối thủ hiện tại đang làm không tốt.
@@ -69,7 +81,7 @@ Cấu trúc phản hồi JSON phải như sau:
     {{
       "asin": "string (ASIN của sản phẩm)",
       "classification": "string (Giữ nguyên các thuật ngữ tiếng Anh này: Winner, High Potential, Potential, Skip)",
-      "reason": "string (Lý do toàn diện của mày, giải thích tại sao đây có thể là một sản phẩm win, ngay cả khi nó ở trong một ngách mới. Cung cấp phần này bằng tiếng Việt.)",
+      "reason": "string (Giải thích qua chức năng và điểm đặc biệt của sản phẩm, Lý do toàn diện của mày, giải thích tại sao đây có thể là một sản phẩm win, ngay cả khi nó ở trong một ngách mới. Cung cấp phần này bằng tiếng Việt.)",
       "viral_potential": "string (Giữ nguyên các thuật ngữ tiếng Anh này: Low, Medium, High)",
       "uniqueness_score": "number (1-10, 1 là hàng phổ thông, 10 là cực kỳ độc đáo)",
       "market_trend_score": "number (1-10, sản phẩm này phù hợp với các xu hướng hiện tại hoặc mới nổi ở thị trường Mỹ như thế nào)",
@@ -83,38 +95,60 @@ Cấu trúc phản hồi JSON phải như sau:
 """
 
 # --- CORE FUNCTIONS ---
-def analyze_product_batch_api(product_batch_list, model, prompt_template):
-    logging.info(f"Bat dau ham analyze_product_batch_api voi {len(product_batch_list)} san pham.") # <<< DEBUG LOG >>>
+def analyze_product_batch_api(product_batch_list, model, prompt_template, request_options=None):
+    # Hàm này bây giờ sẽ KHÔNG còn khối try...except nữa
+    logging.info(f"Bat dau ham analyze_product_batch_api voi {len(product_batch_list)} san pham.")
     if not product_batch_list: return None
     output = io.StringIO()
-    fieldnames = product_batch_list[0].keys()
+    fieldnames = product_batch_list [0].keys()
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
     writer.writerows(product_batch_list)
     csv_string = output.getvalue()
     prompt = prompt_template.format(product_batch_csv=csv_string)
-    
-    # <<< DEBUG LOG >>> In ra prompt để kiểm tra (chỉ vài trăm ký tự đầu)
+
     logging.info(f"Prompt da tao (200 ky tu dau): {prompt[:200]}...")
-    
+
     try:
-        response = model.generate_content(prompt)
-        # <<< DEBUG LOG >>> In ra toàn bộ text trả về từ API TRƯỚC khi xử lý
-        logging.info(f"API Response Text (RAW): {response.text}")
+        response = model.generate_content(prompt, request_options=request_options)
+
+        # In tất cả mọi thứ về cái response này ra để mổ xẻ
+        logging.info("------------------- TROUBLESHOOTING RESPONSE -------------------")
+        logging.info(f"1. KIỂU DỮ LIỆU CỦA RESPONSE: {type(response)}")
+        logging.info(f"2. TOÀN BỘ RESPONSE (DẠNG THÔ): {response}")
         
+        # Kiểm tra thuộc tính 'parts' (thứ quyết định code của mình trả về text hay None)
+        if hasattr(response, 'parts'):
+            logging.info(f"3. THUỘC TÍNH 'PARTS': {response.parts}")
+        else:
+            logging.info("3. THUỘC TÍNH 'PARTS': *** KHÔNG TỒN TẠI ***")
+
+        # Kiểm tra thuộc tính 'prompt_feedback' (thứ sẽ cho biết lý do bị chặn)
+        if hasattr(response, 'prompt_feedback'):
+            logging.info(f"4. THUỘC TÍNH 'PROMPT_FEEDBACK': {response.prompt_feedback}")
+        else:
+            logging.info("4. THUỘC TÍNH 'PROMPT_FEEDBACK': *** KHÔNG TỒN TẠI ***")
+        logging.info("----------------------------------------------------------------")
+
+        # Logic xử lý cũ
         if response.parts:
             cleaned_text = response.text.strip().replace('```json', '').replace('```', '')
-            logging.info(f"Cleaned Text (truoc khi load json): {cleaned_text}") # <<< DEBUG LOG >>>
-            return json.loads(cleaned_text)
-        
-        logging.warning("API response khong co 'parts'.") # <<< DEBUG LOG >>>
-        return None
-    except Exception as e:
-        # <<< DEBUG LOG >>> Ghi log lỗi chi tiết ra console
-        logging.error(f"LOI TRONG HAM analyze_product_batch_api: {e}", exc_info=True)
-        st.error(f"Lỗi API hoặc JSON: {e}")
-        return None
+            try:
+                return json.loads(cleaned_text)
+            except json.JSONDecodeError as e:
+                logging.error(f"LOI PARSE JSON: {e}. Raw text: {cleaned_text}")
+                return None
+        else:
+            logging.warning("Response không có 'parts'. Trả về None.")
+            return None
 
+    except Exception as e:
+        # Nếu có lỗi ngay cả khi gọi API, nó sẽ được bắt ở vòng lặp main()
+        # Nhưng ta cứ log nó ở đây cho chắc
+        logging.error(f"!!! LỖI BẤT NGỜ TRONG LÚC GỌI API: {e}", exc_info=True)
+        # Ném lỗi ra ngoài để khối try...except ở main() xử lý
+        raise e
+    
 # --- STREAMLIT APP UI ---
 def main():
     st.title("🚀 Công Cụ Phân Tích Sản Phẩm")
@@ -129,9 +163,9 @@ def main():
     st.sidebar.header("Cài đặt Phân tích")
     model_name = st.sidebar.selectbox(
         "Chọn Model Gemini", 
-        ('gemini-2.5-pro', 'gemini-1.5-flash'),
-        index=0, 
-        help="1.5 Pro cho chất lượng phân tích cao nhất."
+        ('gemini-2.5-pro', 'gemini-2.5-flash'),
+        index=1, 
+        help="2.5 Pro cho chất lượng phân tích cao nhất."
     )
     batch_size = st.sidebar.slider("Số sản phẩm mỗi lô", 5, 20, 10)
 
@@ -144,7 +178,11 @@ def main():
     if output_option == 'Ghi vào Google Sheet':
         gsheet_id = st.sidebar.text_input("ID của Google Sheet 'KHO KẾT QUẢ'", 
                                           "1v0Ms4Mg1L5liXl-5pGRhWoIXSipS0E5z7zGT4G8-JAM")
-        write_interval = st.sidebar.slider("Ghi vào Google Sheet sau mỗi (lô)", 1, 10, 5,
+        if gsheet_id:
+            sheet_url = f"https://docs.google.com/spreadsheets/d/{gsheet_id}"
+            st.sidebar.markdown(f"🔗 [Mở Google Sheet trong tab mới]({sheet_url})")
+
+        write_interval = st.sidebar.slider("Ghi vào Google Sheet sau mỗi (lô)", 1, 10, 1,
                                            help="Ví dụ: chọn 5 nghĩa là cứ xử lý xong 5 lô thì sẽ ghi kết quả vào Sheet một lần.")
 
     with st.expander("📝 Chỉnh sửa Prompt (Nâng cao)"):
@@ -269,85 +307,107 @@ def main():
 
                 batch_results_for_sheet = [] # List để tích trữ kết quả cho mỗi lần ghi vào sheet
                 for i, batch in enumerate(batches):
-                    logging.info(f"--- Bat dau xu ly lo {i+1}/{len(batches)} ---") # <<< DEBUG LOG >>>
-                    
-                    elapsed_seconds = time.time() - st.session_state.start_time
-                    mins, secs = divmod(int(elapsed_seconds), 60)
-                    timer_text = f"⏳ **Thời gian đã chạy:** {mins:02d} phút {secs:02d} giây"
-                    timer_placeholder.markdown(timer_text)
+                    try: # BẮT ĐẦU BỌC LỖI TỪ ĐÂY
+                        logging.info(f"--- Bat dau xu ly lo {i+1}/{len(batches)} ---")
 
-                    status_text = f"Đang xử lý lô {i+1}/{len(batches)}... Vui lòng chờ."
-                    progress_bar.progress((i) / len(batches), text=status_text)
+                        elapsed_seconds = time.time() - st.session_state.start_time
+                        mins, secs = divmod(int(elapsed_seconds), 60)
+                        timer_text = f"⏳ **Thời gian đã chạy:** {mins:02d} phút {secs:02d} giây"
+                        timer_placeholder.markdown(timer_text)
 
-                    if not batch: 
-                        logging.warning(f"Lo {i+1} rong, bo qua.") # <<< DEBUG LOG >>>
+                        status_text = f"Đang xử lý lô {i+1}/{len(batches)}... Vui lòng chờ."
+                        progress_bar.progress((i) / len(batches), text=status_text)
+
+                        if not batch:
+                            logging.warning(f"Lo {i+1} rong, bo qua.")
+                            continue
+
+                        filtered_batch = []
+                        for product in batch:
+                            filtered_product = {key: product.get(key, '') for key in INPUT_COLUMNS_FOR_AI}
+                            filtered_batch.append(filtered_product)
+
+                        # Gọi API với timeout là 180 giây (3 phút)
+                        analysis_result = analyze_product_batch_api(
+                            filtered_batch,
+                            model,
+                            prompt_text,
+                            request_options={"timeout": 180} # SỬA TIMEOUT CÒN 180
+                        )
+
+                        if analysis_result:
+                            logging.info(f"Goi API cho lo {i+1} thanh cong.")
+                        else:
+                            logging.warning(f"Goi API cho lo {i+1} that bai hoac khong co ket qua.")
+
+                        time.sleep(2)
+
+                        # <<< DEBUG LOG >>> In ra ket qua phan tich cua lo
+                        logging.info(f"Ket qua phan tich cho lo {i+1}: {analysis_result}")
+
+                        processed_batch = []
+                        if analysis_result and 'product_analyses' in analysis_result:
+                            logging.info(f"Lo {i+1} phan tich thanh cong, bat dau ghep du lieu.") # <<< DEBUG LOG >>>
+                            batch_map = {str(row.get('ASIN')): row for row in batch if row.get('ASIN')}
+                            for analysis in analysis_result['product_analyses']:
+                                asin = str(analysis.get('asin'))
+                                if asin in batch_map:
+                                    original_row = batch_map [asin]
+                                    original_row.update(analysis)
+                                    if isinstance(original_row.get('risks'), list):
+                                        original_row['risks'] = ', '.join(map(str, original_row['risks']))
+                                    processed_batch.append(original_row)
+                                else:
+                                    # <<< DEBUG LOG >>> Canh bao neu ASIN tu AI khong co trong batch goc
+                                    logging.warning(f"ASIN '{asin}' tu AI response khong tim thay trong batch goc.")
+                        else:
+                            logging.error(f"LOI: Lo {i+1} xu ly that bai hoac khong co ket qua. Gan co 'API_ERROR'.") # <<< DEBUG LOG >>>
+                            st.warning(f"Lô {i+1} xử lý thất bại hoặc không có kết quả. Gắn cờ 'API_ERROR'.")
+                            for row in batch:
+                                row['classification'] = 'API_ERROR'
+                                processed_batch.append(row)
+
+                        final_results_for_df.extend(processed_batch)
+
+                        if output_option == 'Ghi vào Google Sheet' and worksheet:
+                            batch_results_for_sheet.extend(processed_batch)
+
+                            # Điều kiện để ghi:
+                            # 1. Đã xử lý đủ số lô trong `write_interval`
+                            # 2. Hoặc đây là lô cuối cùng
+                            is_last_batch = (i + 1) == len(batches)
+                            if (len(batch_results_for_sheet) > 0) and (((i + 1) % write_interval == 0) or is_last_batch):
+                                with st.spinner(f"Đang ghi {len(batch_results_for_sheet)} kết quả vào Google Sheet..."):
+                                    try:
+                                        # Chuyển list of dicts thành list of lists theo đúng thứ tự cột
+                                        rows_to_append = []
+                                        for row_dict in batch_results_for_sheet:
+                                            row_list = [row_dict.get(col, '') for col in OUTPUT_COLUMN_ORDER]
+                                            rows_to_append.append(row_list)
+                                        range_to_update = f'B{next_row_to_write}'
+                                        worksheet.update(range_name=range_to_update, values=rows_to_append)
+
+                                        next_row_to_write += len(rows_to_append)
+
+                                        st.toast(f"✅ Đã ghi thành công {len(batch_results_for_sheet)} sản phẩm vào Sheet!")
+                                        batch_results_for_sheet.clear()
+                                    except Exception as e:
+                                        st.error(f"Lỗi khi ghi batch vào Google Sheet: {e}")
+                                        # Giữ lại dữ liệu để thử ghi vào lần sau
+                        logging.info(f"--- HOAN THANH XU LY LO {i+1}. Da xu ly tong cong {len(final_results_for_df)} san pham. ---")
+
+                    # BẮT LỖI TIMEOUT VÀ SKIP
+                    except (google_exceptions.RetryError, google_exceptions.DeadlineExceeded) as e:
+                        logging.error(f"!!! LO {i+1} BI TIMEOUT (QUA 3 PHUT). BO QUA. Loi: {e}")
+                        st.warning(f"Lô {i+1} bị timeout, tự động bỏ qua.")
+                        continue # Bỏ qua lô này và sang lô tiếp theo
+
+                    # Bắt các lỗi chung khác nếu có
+                    except Exception as e:
+                        logging.error(f"!!! LO {i+1} GAP LOI KHAC KHONG XAC DINH. BO QUA. Loi: {e}", exc_info=True)
+                        st.error(f"Lô {i+1} gặp lỗi không xác định: {e}")
                         continue
-                        
-                    filtered_batch = []
-                    for product in batch:
-                        # product ở đây là một dict chứa TẤT CẢ thông tin
-                        # filtered_product là một dict mới chỉ chứa các key trong INPUT_COLUMNS_FOR_AI
-                        filtered_product = {key: product.get(key, '') for key in INPUT_COLUMNS_FOR_AI}
-                        filtered_batch.append(filtered_product)
-                    
-                    # Chỉ gửi cái batch đã được lọc đi phân tích
-                    analysis_result = analyze_product_batch_api(filtered_batch, model, prompt_text)
-                    time.sleep(2)
-                    
-                    # <<< DEBUG LOG >>> In ra ket qua phan tich cua lo
-                    logging.info(f"Ket qua phan tich cho lo {i+1}: {analysis_result}")
-                    
-                    processed_batch = []
-                    if analysis_result and 'product_analyses' in analysis_result:
-                        logging.info(f"Lo {i+1} phan tich thanh cong, bat dau ghep du lieu.") # <<< DEBUG LOG >>>
-                        batch_map = {str(row.get('ASIN')): row for row in batch if row.get('ASIN')}
-                        for analysis in analysis_result['product_analyses']:
-                            asin = str(analysis.get('asin'))
-                            if asin in batch_map:
-                                original_row = batch_map[asin]
-                                original_row.update(analysis)
-                                if isinstance(original_row.get('risks'), list):
-                                    original_row['risks'] = ', '.join(map(str, original_row['risks']))
-                                processed_batch.append(original_row)
-                            else:
-                                # <<< DEBUG LOG >>> Canh bao neu ASIN tu AI khong co trong batch goc
-                                logging.warning(f"ASIN '{asin}' tu AI response khong tim thay trong batch goc.")
-                    else:
-                        logging.error(f"LOI: Lo {i+1} xu ly that bai hoac khong co ket qua. Gan co 'API_ERROR'.") # <<< DEBUG LOG >>>
-                        st.warning(f"Lô {i+1} xử lý thất bại hoặc không có kết quả. Gắn cờ 'API_ERROR'.")
-                        for row in batch:
-                            row['classification'] = 'API_ERROR'
-                            processed_batch.append(row)
-                    
-                    final_results_for_df.extend(processed_batch)
-                    
-                    if output_option == 'Ghi vào Google Sheet' and worksheet:
-                        batch_results_for_sheet.extend(processed_batch)
-                        
-                        # Điều kiện để ghi:
-                        # 1. Đã xử lý đủ số lô trong `write_interval`
-                        # 2. Hoặc đây là lô cuối cùng
-                        is_last_batch = (i + 1) == len(batches)
-                        if (len(batch_results_for_sheet) > 0) and (((i + 1) % write_interval == 0) or is_last_batch):
-                            with st.spinner(f"Đang ghi {len(batch_results_for_sheet)} kết quả vào Google Sheet..."):
-                                try:
-                                    # Chuyển list of dicts thành list of lists theo đúng thứ tự cột
-                                    # Sửa lại cho đúng
-                                    rows_to_append = []
-                                    for row_dict in batch_results_for_sheet:
-                                        row_list = [row_dict.get(col, '') for col in OUTPUT_COLUMN_ORDER]
-                                        rows_to_append.append(row_list)                                 
-                                    range_to_update = f'B{next_row_to_write}'
-                                    worksheet.update(range_name=range_to_update, values=rows_to_append)
 
-                                    next_row_to_write += len(rows_to_append)
-
-                                    st.toast(f"✅ Đã ghi thành công {len(batch_results_for_sheet)} sản phẩm vào Sheet!")
-                                    batch_results_for_sheet.clear()
-                                except Exception as e:
-                                    st.error(f"Lỗi khi ghi batch vào Google Sheet: {e}")
-                                    # Giữ lại dữ liệu để thử ghi vào lần sau
-                    # <<< END: LOGIC GHI BATCH >>>
 
                 progress_bar.progress(1.0, text="Phân tích AI hoàn tất!")
                 logging.info("======= HOAN TAT TOAN BO CAC LO =======") # <<< DEBUG LOG >>>
@@ -362,7 +422,7 @@ def main():
                 result_df = result_df[final_ordered_columns + other_columns]
                 
                 st.subheader("Xem Trước Toàn Bộ Kết Quả Phân Tích")
-                st.dataframe(result_df)
+                # st.dataframe(result_df)
 
                 if output_option == 'Tải File CSV':
                     with st.spinner("Đang chuẩn bị file CSV..."):
