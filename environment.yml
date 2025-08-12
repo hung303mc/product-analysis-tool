@@ -1,6 +1,7 @@
 name: product_analysis_env
 channels:
-  - https://repo.anaconda.com/pkgs/snowflake
+  - conda-forge
+  - defaults
 dependencies:
   - python=3.9
   - streamlit
@@ -8,4 +9,7 @@ dependencies:
   - google-generativeai
   - gspread
   - gspread-dataframe
-  - requests
+  - google-auth-oauthlib
+  - google-api-python-client
+  - grpcio
+  - protobuf
