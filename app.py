@@ -14,22 +14,72 @@ import numpy as np
 import logging # <<< DEBUG LOG >>> Thêm thư viện logging
 from google.api_core import exceptions as google_exceptions
 
-# <<< DEBUG LOG >>> Cấu hình logging để in ra console
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    encoding='utf-8',
-    handlers=[
-        # Handler này để ghi log vào file.
-        # mode='w' nghĩa là ghi đè file mỗi lần chạy. Đổi thành 'a' nếu muốn ghi nối tiếp.
-        logging.FileHandler("debug_log.txt", mode='a'),
-        
-        # Handler này để giữ lại việc in log ra console (terminal) như cũ.
-        logging.StreamHandler()
-    ]
-)
+import requests
 
-logging.info("Logging đã được cấu hình để ghi vào file debug_log.txt và console.")
+class SyncApiLogHandler(logging.Handler):
+    """
+    Handler này gửi log ngay lập tức (đồng bộ), không dùng thread.
+    An toàn để sử dụng với Streamlit.
+    """
+    def __init__(self, url, merchant_id, machine_id, version):
+        super().__init__()
+        self.url = url
+        self.merchant_id = merchant_id
+        self.machine_id = machine_id
+        self.version = version
+
+    def emit(self, record):
+        timestamp = datetime.utcfromtimestamp(record.created).isoformat() + "Z"
+        
+        log_entry = {
+            'timestamp': timestamp,
+            'message': self.format(record)
+        }
+
+        payload = {
+            'merchantId': self.merchant_id,
+            'machineId': self.machine_id,
+            'version': self.version,
+            'logs': [log_entry] # Gửi một mảng chứa 1 log duy nhất
+        }
+        
+        try:
+            # Gửi log ngay lập tức, timeout 5 giây
+            requests.post(self.url, json=payload, timeout=5)
+        except requests.RequestException as e:
+            # Nếu gửi log lỗi, in ra console của server để mình biết
+            print(f"!!! Lỗi không thể gửi log đến API: {e}")
+
+# --- THÔNG TIN CẤU HÌNH ---
+LOG_API_URL = "https://bkteam.top/dungvuong-admin/api/log_receiver_simple.php"
+APP_VERSION = "1.0.1" 
+SESSION_ID = f"streamlit_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+# --- THIẾT LẬP LOGGER ---
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+if logger.hasHandlers():
+    logger.handlers.clear()
+
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+# 1. Handler để in ra Console (để xem log trên Streamlit Cloud)
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(formatter)
+logger.addHandler(stream_handler)
+
+# 2. Handler để gửi log về API (dùng class mới)
+api_handler = SyncApiLogHandler(
+    url=LOG_API_URL,
+    merchant_id='product-analysis-tool',
+    machine_id=SESSION_ID,
+    version=APP_VERSION
+)
+api_handler.setFormatter(formatter)
+logger.addHandler(api_handler)
+
+logging.info(f"Logging (Sync) đã được khởi tạo. Session ID: {SESSION_ID}")
 
 
 # --- PAGE CONFIG ---
@@ -37,20 +87,34 @@ st.set_page_config(page_title="Product Analysis Tool", page_icon="🚀", layout=
 
 # --- AUTHENTICATION & SETUP ---
 # Thiết lập cho cả Gemini và Google Sheets
+# Sửa lại khối này
+# --- AUTHENTICATION & SETUP ---
 try:
+    logging.info("Bắt đầu khối xác thực...")
+    
+    logging.info("1. Đang đọc GOOGLE_API_KEY từ secrets...")
     GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
     genai.configure(api_key=GOOGLE_API_KEY)
+    logging.info("=> Xác thực Gemini OK.")
     
+    logging.info("2. Đang đọc gcp_service_account từ secrets...")
     GCP_CREDS = st.secrets["gcp_service_account"]
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
     creds = Credentials.from_service_account_info(GCP_CREDS, scopes=SCOPES)
+    logging.info("=> Tạo credentials cho Google Sheets OK.")
+    
+    logging.info("3. Đang gọi gspread.authorize...")
     gc = gspread.authorize(creds)
+    logging.info("=> Xác thực Google Sheets OK.")
+
+    logging.info("Hoàn tất khối xác thực.")
 
 except Exception as e:
+    logging.error(f"!!! GẶP LỖI TRONG KHỐI XÁC THỰC: {e}", exc_info=True)
     st.error(f"Lỗi cài đặt hoặc xác thực: {e}")
     st.info("Hãy kiểm tra lại file .streamlit/secrets.toml và chắc chắn mày đã cấu hình đủ cả GOOGLE_API_KEY và gcp_service_account.")
     st.stop()
-
+    
 # --- PROMPT TEMPLATE (Giữ nguyên như code gốc của mày) ---
 DEFAULT_PROMPT = """
 Mày là một nhà chiến lược tìm kiếm cơ hội trong thương mại điện tử. Mục tiêu chính của mày là xác định các sản phẩm "winner" MỚI cho một doanh nghiệp online linh hoạt, phù hợp với chiến lược tăng trưởng 2 giai đoạn.
